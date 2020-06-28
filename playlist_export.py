@@ -1,10 +1,9 @@
-#export SPOTIPY_CLIENT_ID='7df77099461e4a33a3ccd1471a5e66b6'
-#export SPOTIPY_CLIENT_SECRET='80a339be93c74bd89a53a160b91f46bb'
-#export SPOTIPY_REDIRECT_URI='http://localhost:8070'
+#ID='7df77099461e4a33a3ccd1471a5e66b6'
+#SECRET='80a339be93c74bd89a53a160b91f46bb'
 
 import mutagen as mg
-import eyed3, re, spotipy
-import pdb, sys, logging, configparser
+import eyed3, spotipy
+import pdb, sys, logging, configparser, re
 from spotipy.oauth2 import SpotifyOAuth
 from compare import evaluate
 from datetime import datetime
@@ -39,7 +38,7 @@ tolerances = {
 	'withoutAlbumOrAlbumArtist': 0.6
 }
 
-profileLocation='exporter.profile'
+profileLocation='importer.profile'
 
 def search(searchString, trackInfo):
 	results = sp.search(searchString)
@@ -165,7 +164,7 @@ def main():
 					else:
 						logging.warning("Can't be confident we've found track %s", track)
 						missing.append(track)
-		except FileNotFoundError:
+		except (FileNotFoundError, mg.MutagenError):
 			logging.warning('Could not find file %s', track)
 			missing.append(track)
 			continue
@@ -202,6 +201,10 @@ def main():
 		sys.exit()
 
 		
+#############################################
+########### SCRIPT DO STUFF BEGIN ###########
+#############################################
+
 
 logFileName = 'spotify_playlist_import_log_' + datetime.now().strftime('%H:%M:%S') + '.log'
 logging.basicConfig(format='%(levelname)s:%(message)s', 

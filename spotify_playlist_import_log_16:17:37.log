@@ -1,0 +1,5 @@
+INFO:Connecting to Spotify API
+INFO:Done
+INFO:Processing ﻿\Music\The Doors\L.A. Woman\05 - L.A. Woman.MP3
+ERROR:Unexpected error: <class 'AttributeError'>
+INFO:Processing \Music\The Doors\Alive She Cried\02 - Light My Fire.mp3

@@ -4,14 +4,13 @@
 
 import mutagen as mg
 import eyed3, re, spotipy
-import pdb, sys
+import pdb, sys, logging, configparser
 from spotipy.oauth2 import SpotifyOAuth
 from compare import evaluate
 from datetime import datetime
+from tqdm import tqdm
 
-print('Connecting to Spotify API...')
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope='playlist-modify-private', username='louie.gabriel@gmail.com'))
-print('Done.')
+
 
 def mp3Handler(path):
 	data = eyed3.load(path)
@@ -40,6 +39,8 @@ tolerances = {
 	'withoutAlbumOrAlbumArtist': 0.6
 }
 
+profileLocation='exporter.profile'
+
 def search(searchString, trackInfo):
 	results = sp.search(searchString)
 	candidates = []
@@ -66,41 +67,78 @@ def buildPlaylist(userId, playlistId, uris, n):
 			tracks=uris[i:i+n])
 		i += n
 
+def prompt(string, default):
+	if not default:
+		i = ''
+		while i == '':
+			i = input(string)
+		return i
+	else:
+		i = input('(' + default + ') ' + string)
+		return default if i == '' else i
 
 def main():
+	profile = configparser.ConfigParser()
+	profile.read(profileLocation)
+	if 'default' in profile:
+		defaultPLFile = profile['default']['previousPlaylistFile'] if 'previousPlaylistFile' in profile['default'] else None
+		defaultRegex = profile['default']['readRegex'] if 'readRegex' in profile['default'] else None
+		defaultFileLoc = profile['default']['fileLocation'] if 'fileLocation' in profile['default'] else None
+		defaultPlName = profile['default']['newPlaylistName'] if 'newPlaylistName' in profile['default'] else None
+	else:
+		defaultPLFile = None
+		defaultRegex = None
+		defaultFileLoc = None
+		defaultPlName = None
+	
+	#There is definitely danger in doing it this way with the regex thing...
+	#Could climb the file tree etc
+	#I think for these purposes though, we don't care
+	PLFile = prompt('Playlist file: ', defaultPLFile)
+	mainRegex = prompt('Regex for reading the playlist file: ', defaultRegex)
+	pathSkeleton = prompt('Path to tracks (array g holds the captured groups): ', defaultFileLoc)
+	newPlName = prompt('Name for the Spotify playlist: ', defaultPlName)
+	print()
+
+
+
 	try:
-		pl = open("/home/louie/other/Acid Rain.m3u").read().split("\n")[0:-1]
+		pl = open(PLFile).read().split("\n")[0:-1]
 	except FileNotFoundError:
-		print('Could not open playlist file ' + 'bla bla')
+		print('Could not open playlist file ' + PLFile)
+		logging.critical('Could not open playlist file ' + PLFile)
 		sys.exit()
 	except Exception:
-		print('Unexpected error: ', sys.exc_info()[0])
+		logging.critical('Unexpected error: %s', sys.exc_info()[0])
 		sys.exit()
 
-	mainRegex = "Music\\\\(.*?)\\\\(.*?)\\\\(.*?)$"
-	found = []	#Spotipy documentation incorrectly states it should be ID
+	print('Processing playlist file...')
+	found = []	#Spotipy documentation incorrectly states it should be IDs, think it should
+				#be URIs
 	missing = []
-	for track in pl:
+	for track in tqdm(pl):
 		try:
+			logging.info('Processing %s', track)
 			result = re.findall(mainRegex, track)
-			if result == []:
-				print('Could not match any groups in string: ' + track)
+			if result == [] or result[0] == ():
+				logging.error('Could not match any groups in string: %s', track)
 				continue
 			g = result[0]
-			if len(g) != 3:
-				print('Could not match some groups in string: ' + track)
-				continue
+			#Check we match every group?
 
 			#Want to now map our captured groups to parts of the path where we think the actual tracks live.
-			path = f'/home/louie/SD/Music/{g[0]}/{g[1]}/{g[2]}'
+			path = pathSkeleton
+			for index, group in enumerate(g):
+				path = re.compile(r'\{g\[' + str(index) + r'\]\}').sub(group, path)
+
 			handlerFound = False
 			for extension, handler in handlers.items():
-				if g[2].endswith(extension):
+				if g[-1].endswith(extension):
 					handlerFound = True
 					trackInfo = handler(path)
 					break
 			if not handlerFound:
-				print('No support for file type of: ' + track)
+				logging.error('No support for file type of: %s', track)
 				continue
 			
 			searchString = ' '.join(filter(None, trackInfo.values()))
@@ -123,33 +161,57 @@ def main():
 					searchString = ' '.join(filter(None, modified.values()))
 					candidates = search(searchString, modified)
 					if candidates and candidates[0]['similarity'] > tolerances['withoutAlbumOrAlbumArtist']:
-						print(candidates[0])
 						found.append(candidates[0])
 					else:
-						print("Can't be confident we've found track " + track)
+						logging.warning("Can't be confident we've found track %s", track)
 						missing.append(track)
 		except FileNotFoundError:
-			print('Could not find file ' + track)
+			logging.warning('Could not find file %s', track)
 			missing.append(track)
 			continue
 		except Exception:
-			print('Unexpected error: ', sys.exc_info()[0])
+			logging.error('Unexpected error: %s', sys.exc_info()[0])
 			missing.append(track)
 			continue
 		
-	
-	print(missing)
-	uris = list(map(lambda t: t['uri'], found))
-	userId = sp.me()['id']
-	targetPlaylist = sp.user_playlist_create(
-		user=userId, 
-		name='TEST PL: ' + datetime.now().strftime('%H:%M:%S'), 
-		public=False, 
-		description='')
-	buildPlaylist(userId, targetPlaylist['id'], uris, 50)
+	try:
+		print('Done. The following tracks could not be found and will have to be added manually: ')
+		print(*missing, sep='\n')
+		uris = list(map(lambda t: t['uri'], found))
+		userId = sp.me()['id']
+		targetPlaylist = sp.user_playlist_create(
+			user=userId, 
+			name=newPlName, 
+			public=False, 
+			description='')
+		print('Playlist ' + newPlName + ' created')
+		logging.info('Playlist %s created', newPlName)
+		buildPlaylist(userId, targetPlaylist['id'], uris, 50)
+		print('Playlist populated')
+		logging.info('Playlist populated')
+
+		#Cleanup
+		profile['default']['previousPlaylistFile'] = PLFile
+		profile['default']['readRegex'] = mainRegex
+		profile['default']['fileLocation'] = pathSkeleton
+		profile['default']['newPlaylistName'] = newPlName
+		with open(profileLocation, 'w') as confFile:
+			profile.write(confFile)
+	except Exception:
+		print('Unexpected Spotipy errror: ', sys.exc_info()[0])
+		sys.exit()
 
 		
 
-
-
+logFileName = 'spotify_playlist_import_log_' + datetime.now().strftime('%H:%M:%S') + '.log'
+logging.basicConfig(format='%(levelname)s:%(message)s', 
+		filename=logFileName,
+		level=logging.INFO)
+print('Log file set to ', logFileName)
+print('Connecting to Spotify API...')
+logging.info('Connecting to Spotify API')
+sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope='playlist-modify-private', username='louie.gabriel@gmail.com'))
+print('Done.')
+logging.info('Done')
 main()
+print('Reminder: log file at ', logFileName)

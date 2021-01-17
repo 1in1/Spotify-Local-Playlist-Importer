@@ -1,5 +1,5 @@
-#ID='7df77099461e4a33a3ccd1471a5e66b6'
-#SECRET='80a339be93c74bd89a53a160b91f46bb'
+#ID=''
+#SECRET=''
 
 import mutagen as mg
 import eyed3, spotipy
